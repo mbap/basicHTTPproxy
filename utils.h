@@ -96,6 +96,15 @@ unsigned char *deserialize_int(unsigned char *buffer, unsigned int *val);
 unsigned char *deserialize_data(unsigned char *buffer, char buf[], int len);
 
 /**
+ * Points each element to null in the array.
+ *
+ * @param array The array to null out.
+ * @param len The length of the array.
+ *  
+ */
+void null_array(char *array[], int len);
+
+/**
  * Allows for debugging print statements to be made and easily turned off for release build
  *
  * @param format The format string to format the print statement.

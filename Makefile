@@ -8,8 +8,8 @@ CHEADER   = http_parser.h utils.h
 
 all: proxy_server
 
-proxy_server: proxy_server.o utils.o http_parser.o
-	${GCC} -o proxy_server proxy_server.o utils.o http_parser.o
+proxy_server: proxy_server.o utils.o http_parser.o log.o
+	${GCC} -o proxy_server proxy_server.o utils.o http_parser.o log.o
 
 proxy_server.o: proxy_server.c
 	${GCC} -c proxy_server.c
@@ -19,6 +19,9 @@ utils.o: utils.c
 
 http_parser.o: http_parser.c
 	${GCC} -c http_parser.c
+
+log.o: log.c
+	${GCC} -c log.c
 
 clean:
 	rm *.o
