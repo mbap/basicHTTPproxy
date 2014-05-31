@@ -210,47 +210,6 @@ void *handle_client_request(void *c) {
    FD_ZERO(&master);
    FD_SET(client_socket, &master); // add listening socket to master list.
 
-   /*
-   // loop forever until the exit or done message is given.
-   // if the timeval tv expires in select a retranmission should occur.
-   int breakloop = FALSE;  // var to break out of while loop below
-   int connection_timeouts = 0; // sets breakloop. counts timeouts
-   while (1) {
-
-       DEBUGF("Posix thread waiting on select().\n");
-       struct timeval tv = {0,0};
-       tv.tv_sec = 5;
-       fd_set read_fds = master;
-
-       if (select(client_socket + 1, &read_fds, NULL, NULL, &tv) < 0) {
-          fprintf(stderr, "Error: select() failed.\n");
-          if (errno == EBADF) {
-             fprintf(stderr, "Error: select() failed due to bad descriptor.\n");
-             breakloop = TRUE;
-          }
-       }
-       DEBUGF("select() has returned.\n");
-
-       if (FD_ISSET(client_socket, &read_fds)) {
-          // process client response.
-          unsigned char buffer[1100];
-          bzero(buffer, sizeof(buffer));
-       } else {
-          // handle timeout
-          // retransmit last packet.
-          connection_timeouts++;
-          if (connection_timeouts > 5) {
-              breakloop = TRUE;
-          }
-       }
-
-       // if breakloop flag is set we must have a bad connection.
-       if (breakloop) {
-           break;
-       }
-   }
-   */
-
    // recv http message from browser.
    char buf[BUFLEN];
    bzero(buf, sizeof(buf));
@@ -309,20 +268,11 @@ void *handle_client_request(void *c) {
    parse_http_header_line(httptokens, httpstrs[1], 100);
    DEBUGF("HOST: %s\n", httptokens[1]);
 
-   struct hostent *host;
-   host = gethostbyname(httptokens[1]);
-   if (host == NULL) {      
-       fprintf(stderr, "Error: gethostbyname(3) failed\n"); 
-       free_parse_allocs(httpstrs, numlines);
-       close_client(client_socket, &master);  
-       pthread_exit((void *)FAILURE);
-   }
-   sockaddr_in info;
-   memcpy(&info.sin_addr, host->h_addr_list[0], sizeof(info.sin_addr));
-   DEBUGF("IP: %s", inet_ntoa(info.sin_addr));
-   /*
+   // remove last byte of hostname to pass dns
+   char dns[15];
+   memcpy(dns, httptokens[1], sizeof(dns));
    struct addrinfo *info;
-   int infochk = getaddrinfo(httptokens[1], "http", NULL, &info);
+   int infochk = getaddrinfo(dns, "http", NULL, &info);
    free_parse_allocs(httptokens, 100);
    if (infochk != 0) {
        if (infochk == EAI_SYSTEM) {
@@ -337,21 +287,62 @@ void *handle_client_request(void *c) {
        pthread_exit((void *)FAILURE);
    }
 
-   int server_address = 0;
+   // save server address for logging.
    char serv_addr_str[32];
    if (info->ai_family == AF_INET) {
        struct sockaddr_in *sin = (struct sockaddr_in *) info->ai_addr;
        char *ifo = inet_ntoa(sin->sin_addr);
        bcopy(ifo, serv_addr_str, strlen(ifo));
-       server_address = sin->sin_addr.s_addr;
+       sin->sin_port = 80; //change to http port.
    }
    freeaddrinfo(info);
-   */
+   DEBUGF("IP: %s\n", serv_addr_str);
 
 
+   // create socket to forward the request.
+   int forward_socket = socket(AF_INET, SOCK_STREAM, 0);
+   if (forward_socket < 0) {
+       fprintf(stderr, "Error: creating socket to forward the request"
+                       "has failed. Aborting request.\n");
+       close_client(client_socket, &master);  
+       pthread_exit((void *)SUCCESS);
+   }
 
+   // connect the to the server using the new socket.
+   sockaddr_in *sin = (sockaddr_in *) info->ai_addr;
+   sin->sin_port = 80;
+   int servcon = connect(forward_socket, (sockaddr *)&sin, sizeof(sin));
+   if (servcon < 0) {
+       fprintf(stderr, "Error: Connection Failed. Aborting request.\n");
+       close(forward_socket);
+       close_client(client_socket, &master);  
+       pthread_exit((void *)SUCCESS);
+   }
+
+   // write the request to the server. 
+   // NOTE: failed to check if all bytes were written.
+   int wchk = write(forward_socket, buf, sizeof(buf));
+   if (wchk < 0) {
+       fprintf(stderr, "Error: request forward to real server failed.\n");
+       fprintf(stderr, "Error: Aborting request.\n");
+       close(forward_socket);
+       close_client(client_socket, &master);  
+       pthread_exit((void *)SUCCESS);
+   }
+
+   // get the response from the server.
+   char forwarder[500];
+   int n = 1;
+   while (n > 0) {
+      bzero(forwarder, sizeof(forwarder));
+      n = read(forward_socket, forwarder, sizeof(forwarder));
+      if(!(n <= 0)) {
+         write(client_socket, forwarder, sizeof(forwarder));
+      }
+   }
 
    // client served succesful close socket and exit thread.
+   close(forward_socket);
    close_client(client_socket, &master);  
    pthread_exit((void *)SUCCESS);
 }
@@ -361,7 +352,3 @@ void close_client(int clisock, fd_set *master) {
    close(clisock);
    FD_CLR(clisock, master);
 }
-
-
-
-

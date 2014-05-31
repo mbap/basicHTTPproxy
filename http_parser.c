@@ -31,14 +31,14 @@ int count_newlines(char buffer[], int bufferlen) {
 
 void parse_http_header(char *lines[], char *buf, int numlines) {
     // get server ip and port from server list.
-    char *tok = buf;
+    char *copy = malloc(strlen(buf) + 1);
+    strcpy(copy, buf);
+    char *tok = copy;
     int i = 0;
     while ((tok = strtok(tok, "\n")) != NULL) {
         int len = strlen(tok);
-        //lines[i] = malloc(len + 1);
-        lines[i] = malloc(len);
+        lines[i] = malloc(len + 1);
         bcopy(tok, lines[i], len);
-        //lines[i][len] = '\0';
         tok = NULL;
         if (i < numlines) {
            ++i;
@@ -46,18 +46,24 @@ void parse_http_header(char *lines[], char *buf, int numlines) {
            break;
         }
     }
+    free(copy);
 }
 
 void parse_http_header_line(char *pieces[], char *line, int pieceslen) {
     // get server ip and port from server list.
-    char *tok = line;
+    char *copy = malloc(strlen(line) + 1);
+    strcpy(copy, line);
+    char *tok = copy;
     int i = 0;
     while ((tok = strtok(tok, " ")) != NULL) {
         int len = strlen(tok);
-        //pieces[i] = malloc(len + 1);
-        pieces[i] = malloc(len);
+        if (i == (pieceslen - 1)) {
+            pieces[i] = malloc(len);
+        } else {
+            pieces[i] = malloc(len + 1);
+        }
         bcopy(tok, pieces[i], len);
-        //pieces[i][len] = '\0';
+        pieces[i][len] = '\0';
         tok = NULL;
         if (i < pieceslen) {
            ++i;
@@ -65,6 +71,7 @@ void parse_http_header_line(char *pieces[], char *line, int pieceslen) {
            break;
         }
     }
+    free(copy);
 }
 
 
