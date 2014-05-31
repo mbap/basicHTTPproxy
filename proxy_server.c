@@ -222,18 +222,18 @@ void *handle_client_request(void *c) {
    DEBUGF("%s\n", timestamp);
     
    // parse http message.  
-   int numlines = count_newlines(buf, sizeof(buf));
+   size_t numlines = count_newlines(buf, sizeof(buf));
    DEBUGF("newlines:%d\n", numlines);
    char *httpstrs[numlines];
    null_array(httpstrs, numlines);
    parse_http_header(httpstrs, buf, numlines);
-   
+
    // parse http line.
    // look for http command and version number 
    char *httptokens[100];
    null_array(httptokens, 100);
    parse_http_header_line(httptokens, httpstrs[0], 100);
-
+   
    // check if allowed server and supported msg (GET HEAD POST only) 
    // respond with 501 if bad msg
    char command[16];
@@ -262,56 +262,43 @@ void *handle_client_request(void *c) {
    // respond with 400 if bad
    // UNIMPLMENTED
    
-
    // get the host and get the server and ip of host.
    null_array(httptokens, 100);
    parse_http_header_line(httptokens, httpstrs[1], 100);
    DEBUGF("HOST: %s\n", httptokens[1]);
 
-   // remove last byte of hostname to pass dns
-   char dns[15];
-   memcpy(dns, httptokens[1], sizeof(dns));
-   struct addrinfo *info;
-   int infochk = getaddrinfo(dns, "http", NULL, &info);
-   free_parse_allocs(httptokens, 100);
-   if (infochk != 0) {
-       if (infochk == EAI_SYSTEM) {
-           perror("getaddrinfo");
-       } else {
-           fprintf(stderr, "Error: getaddrinfo(3) failed: %s.\n", 
-                                             gai_strerror(infochk));
-       }
+   // do the dns lookup.
+   struct hostent *host;
+   host = gethostbyname(httptokens[1]);
+   if (host == NULL) {      
+       fprintf(stderr, "Error: gethostbyname(3) failed\n"); 
        free_parse_allocs(httpstrs, numlines);
-       freeaddrinfo(info);
+       free_parse_allocs(httptokens, 100);
        close_client(client_socket, &master);  
        pthread_exit((void *)FAILURE);
    }
+   free_parse_allocs(httptokens, 100);
+   sockaddr_in info;
+   memcpy(&info.sin_addr, host->h_addr_list[0], sizeof(info.sin_addr));
 
    // save server address for logging.
-   char serv_addr_str[32];
-   if (info->ai_family == AF_INET) {
-       struct sockaddr_in *sin = (struct sockaddr_in *) info->ai_addr;
-       char *ifo = inet_ntoa(sin->sin_addr);
-       bcopy(ifo, serv_addr_str, strlen(ifo));
-       sin->sin_port = 80; //change to http port.
-   }
-   freeaddrinfo(info);
+   char *serv_addr_str = inet_ntoa(info.sin_addr);
    DEBUGF("IP: %s\n", serv_addr_str);
 
-
    // create socket to forward the request.
+   DEBUGF("Thread creating socket to connect to server.\n");
    int forward_socket = socket(AF_INET, SOCK_STREAM, 0);
    if (forward_socket < 0) {
        fprintf(stderr, "Error: creating socket to forward the request"
                        "has failed. Aborting request.\n");
+       free_parse_allocs(httpstrs, numlines);
        close_client(client_socket, &master);  
        pthread_exit((void *)SUCCESS);
    }
 
    // connect the to the server using the new socket.
-   sockaddr_in *sin = (sockaddr_in *) info->ai_addr;
-   sin->sin_port = 80;
-   int servcon = connect(forward_socket, (sockaddr *)&sin, sizeof(sin));
+   DEBUGF("Thread attempting to connect to the server.\n");
+   int servcon = connect(forward_socket, (sockaddr *)&info, sizeof(info));
    if (servcon < 0) {
        fprintf(stderr, "Error: Connection Failed. Aborting request.\n");
        close(forward_socket);
@@ -321,6 +308,7 @@ void *handle_client_request(void *c) {
 
    // write the request to the server. 
    // NOTE: failed to check if all bytes were written.
+   DEBUGF("Forwarding client http request to the server.\n");
    int wchk = write(forward_socket, buf, sizeof(buf));
    if (wchk < 0) {
        fprintf(stderr, "Error: request forward to real server failed.\n");
@@ -333,6 +321,7 @@ void *handle_client_request(void *c) {
    // get the response from the server.
    char forwarder[500];
    int n = 1;
+   DEBUGF("Replying to client response by forwarding server response to client.\n");
    while (n > 0) {
       bzero(forwarder, sizeof(forwarder));
       n = read(forward_socket, forwarder, sizeof(forwarder));
@@ -352,3 +341,5 @@ void close_client(int clisock, fd_set *master) {
    close(clisock);
    FD_CLR(clisock, master);
 }
+
+
