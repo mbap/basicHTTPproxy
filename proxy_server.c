@@ -50,11 +50,13 @@ EXIT STATUS
 
 #include "utils.h"
 #include "http_parser.h"
+#include "log.h"
 
 #define SUCCESS   0
 #define FAILURE   1
 #define TRUE      1
 #define FALSE     0
+#define BUFLEN    8*1024
 
 typedef struct sockaddr sockaddr;
 typedef struct sockaddr_in sockaddr_in;
@@ -250,24 +252,103 @@ void *handle_client_request(void *c) {
    */
 
    // recv http message from browser.
-   char buf[8*1024];
+   char buf[BUFLEN];
    bzero(buf, sizeof(buf));
    read(client_socket, buf, sizeof(buf));
    DEBUGF("HTTP MESSAGE\n%s", buf);
 
    // log time of received message
-
+   char timestamp[64];
+   get_current_time_formatted(timestamp, sizeof(timestamp));
+   DEBUGF("%s\n", timestamp);
+    
    // parse http message.  
-   int newlines = count_newlines(buf, sizeof(buf));
-   DEBUGF("newlines:%d\n", newlines);
+   int numlines = count_newlines(buf, sizeof(buf));
+   DEBUGF("newlines:%d\n", numlines);
+   char *httpstrs[numlines];
+   null_array(httpstrs, numlines);
+   parse_http_header(httpstrs, buf, numlines);
+   
+   // parse http line.
+   // look for http command and version number 
+   char *httptokens[100];
+   null_array(httptokens, 100);
+   parse_http_header_line(httptokens, httpstrs[0], 100);
 
    // check if allowed server and supported msg (GET HEAD POST only) 
    // respond with 501 if bad msg
+   char command[16];
+   char uri[1024];
+   char http_version[16];
+   if (strncmp("GET", httptokens[0], sizeof(httptokens[0])) == 0  || 
+       strncmp("POST", httptokens[0], sizeof(httptokens[0])) == 0 ||
+       strncmp("HEAD", httptokens[0], sizeof(httptokens[0])) == 0) {
+       DEBUGF("%s command.\n", httptokens[0]);
+       bcopy(httptokens[0], command, sizeof(httptokens[0]));
+       bcopy(httptokens[1], uri, sizeof(httptokens[1]));
+       bcopy(httptokens[2], http_version, sizeof(httptokens[2]));
+       free_parse_allocs(httptokens, 100);
+   } else {
+       fprintf(stderr, "%s command not supported.\n", httptokens[0]);
+       write(client_socket, "501 Not Implemented", 
+             strlen("501 Not Implemented"));
+       free_parse_allocs(httptokens, 100);
+       free_parse_allocs(httpstrs, numlines);
+       close_client(client_socket, &master);  
+       pthread_exit((void *)FAILURE);
+   }
+
 
    // check for missing fields in the http msg
    // respond with 400 if bad
+   // UNIMPLMENTED
+   
 
-   // get server ip and port from the hostname.
+   // get the host and get the server and ip of host.
+   null_array(httptokens, 100);
+   parse_http_header_line(httptokens, httpstrs[1], 100);
+   DEBUGF("HOST: %s\n", httptokens[1]);
+
+   struct hostent *host;
+   host = gethostbyname(httptokens[1]);
+   if (host == NULL) {      
+       fprintf(stderr, "Error: gethostbyname(3) failed\n"); 
+       free_parse_allocs(httpstrs, numlines);
+       close_client(client_socket, &master);  
+       pthread_exit((void *)FAILURE);
+   }
+   sockaddr_in info;
+   memcpy(&info.sin_addr, host->h_addr_list[0], sizeof(info.sin_addr));
+   DEBUGF("IP: %s", inet_ntoa(info.sin_addr));
+   /*
+   struct addrinfo *info;
+   int infochk = getaddrinfo(httptokens[1], "http", NULL, &info);
+   free_parse_allocs(httptokens, 100);
+   if (infochk != 0) {
+       if (infochk == EAI_SYSTEM) {
+           perror("getaddrinfo");
+       } else {
+           fprintf(stderr, "Error: getaddrinfo(3) failed: %s.\n", 
+                                             gai_strerror(infochk));
+       }
+       free_parse_allocs(httpstrs, numlines);
+       freeaddrinfo(info);
+       close_client(client_socket, &master);  
+       pthread_exit((void *)FAILURE);
+   }
+
+   int server_address = 0;
+   char serv_addr_str[32];
+   if (info->ai_family == AF_INET) {
+       struct sockaddr_in *sin = (struct sockaddr_in *) info->ai_addr;
+       char *ifo = inet_ntoa(sin->sin_addr);
+       bcopy(ifo, serv_addr_str, strlen(ifo));
+       server_address = sin->sin_addr.s_addr;
+   }
+   freeaddrinfo(info);
+   */
+
+
 
 
    // client served succesful close socket and exit thread.

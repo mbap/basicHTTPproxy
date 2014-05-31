@@ -97,6 +97,12 @@ unsigned char *deserialize_data(unsigned char *buffer, char buf[], int len) {
    return buffer + len;
 }
 
+void null_array(char *array[], int len) {
+    for (int i = 0; i < len; ++i) {
+       array[i] = NULL;
+    }
+}
+
 void debugprintf(char *format, ...) {
    va_list args;
    fflush (NULL);
