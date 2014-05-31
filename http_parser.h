@@ -20,7 +20,7 @@
  *
  * @return The numnber of newline characters.
  */
-int count_newlines(char buffer[], int bufferlen);
+size_t count_newlines(char buffer[], size_t bufferlen);
 
 /**
  * Returns a an array with the http header broken into lines for further parsing. Uses malloc so the array must free each element.
@@ -30,7 +30,7 @@ int count_newlines(char buffer[], int bufferlen);
  * @param lines An array to fill with lines;
  *
  */
-void parse_http_header(char *lines[], char *buf, int numlines); 
+void parse_http_header(char *lines[], char *buf, size_t numlines); 
 
 
 /**
@@ -41,7 +41,7 @@ void parse_http_header(char *lines[], char *buf, int numlines);
  * @param pieceslen The length of the pieces array.
  *
  */
-void parse_http_header_line(char *pieces[], char *line, int pieceslen);
+void parse_http_header_line(char *pieces[], char *line, size_t pieceslen);
 
 /**
  * Frees memory allocations from parsing functions.

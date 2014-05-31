@@ -21,24 +21,43 @@
 #define FAILURE    1
 
 // counts new lines in an http message
-int count_newlines(char buffer[], int bufferlen) {
-    int c = 0;
-    for (int i = 0; i < bufferlen;  i++) {
+size_t count_newlines(char buffer[], size_t bufferlen) {
+    size_t c = 0;
+    for (size_t i = 0; i < bufferlen;  i++) {
         if (buffer[i] == '\n') c++;
     }
     return c;
 }
 
-void parse_http_header(char *lines[], char *buf, int numlines) {
+void parse_http_header(char *lines[], char *buf, size_t numlines) {
     // get server ip and port from server list.
-    char *copy = malloc(strlen(buf) + 1);
-    strcpy(copy, buf);
+    size_t length = strlen(buf);
+    char *copy = malloc(length + 1);
+
+    // remove all '\r' chars
+    size_t x = 0;
+    for (x = 0; x < (length + 1)  && buf[x] != '\0'; x++) {
+        if (buf[x] == '\r') {
+            buf[x] = '\n';
+        }
+    }
+
+    // string copy.
+    size_t i = 0;
+    for (i = 0; i < (length + 1)  && buf[i] != '\0'; i++) {
+        copy[i] = buf[i];
+    }
+    for ( ; i < (length + 1); i++) {
+        copy[i] = '\0';
+    }
+
     char *tok = copy;
-    int i = 0;
+    i = 0;
     while ((tok = strtok(tok, "\n")) != NULL) {
-        int len = strlen(tok);
-        lines[i] = malloc(len + 1);
-        bcopy(tok, lines[i], len);
+        size_t len = strlen(tok);
+        lines[i] = calloc(1, len + 1);
+        bcopy(tok, lines[i], len + 1);
+        lines[i][len] = '\0';
         tok = NULL;
         if (i < numlines) {
            ++i;
@@ -49,21 +68,26 @@ void parse_http_header(char *lines[], char *buf, int numlines) {
     free(copy);
 }
 
-void parse_http_header_line(char *pieces[], char *line, int pieceslen) {
+void parse_http_header_line(char *pieces[], char *line, size_t pieceslen) {
     // get server ip and port from server list.
-    char *copy = malloc(strlen(line) + 1);
-    strcpy(copy, line);
+    size_t length = strlen(line);
+    char *copy = malloc(length + 1);
+
+    // string copy.
+    size_t i = 0;
+    for (i = 0; i < (length + 1)  && line[i] != '\0'; i++) {
+        copy[i] = line[i];
+    }
+    for ( ; i < (length + 1); i++) {
+        copy[i] = '\0';
+    }
+
     char *tok = copy;
-    int i = 0;
+    i = 0;
     while ((tok = strtok(tok, " ")) != NULL) {
-        int len = strlen(tok);
-        if (i == (pieceslen - 1)) {
-            pieces[i] = malloc(len);
-        } else {
-            pieces[i] = malloc(len + 1);
-        }
-        bcopy(tok, pieces[i], len);
-        pieces[i][len] = '\0';
+        size_t len = strlen(tok);
+        pieces[i] = calloc(1, len + 1);
+        bcopy(tok, pieces[i], len + 1);
         tok = NULL;
         if (i < pieceslen) {
            ++i;
