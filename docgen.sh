@@ -1,9 +1,9 @@
 #! /bin/bash
 
-doxygen lab3.cfg
+doxygen finalproj.cfg
 cd latex
 pdflatex refman.tex
-cp refman.pdf ../lab3codedoc.pdf
+cp refman.pdf ../proxyCodeDocs.pdf
 cd ..
 rm -r html 
 rm -r latex
