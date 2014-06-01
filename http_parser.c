@@ -34,14 +34,6 @@ void parse_http_header(char *lines[], char *buf, size_t numlines) {
     size_t length = strlen(buf);
     char *copy = malloc(length + 1);
 
-    // remove all '\r' chars
-    size_t x = 0;
-    for (x = 0; x < (length + 1)  && buf[x] != '\0'; x++) {
-        if (buf[x] == '\r') {
-            buf[x] = '\n';
-        }
-    }
-
     // string copy.
     size_t i = 0;
     for (i = 0; i < (length + 1)  && buf[i] != '\0'; i++) {
@@ -49,6 +41,14 @@ void parse_http_header(char *lines[], char *buf, size_t numlines) {
     }
     for ( ; i < (length + 1); i++) {
         copy[i] = '\0';
+    }
+
+    // remove all '\r' chars
+    size_t x = 0;
+    for (x = 0; x < (length + 1)  && copy[x] != '\0'; x++) {
+        if (copy[x] == '\r') {
+            copy[x] = '\n';
+        }
     }
 
     char *tok = copy;

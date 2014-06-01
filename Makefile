@@ -8,8 +8,8 @@ CHEADER   = http_parser.h utils.h
 
 all: proxy_server
 
-proxy_server: proxy_server.o utils.o http_parser.o log.o
-	${GCC} -o proxy_server proxy_server.o utils.o http_parser.o log.o
+proxy_server: proxy_server.o utils.o http_parser.o log.o siteblock.o
+	${GCC} -o proxy_server proxy_server.o utils.o http_parser.o log.o siteblock.o
 
 proxy_server.o: proxy_server.c
 	${GCC} -c proxy_server.c
@@ -23,11 +23,15 @@ http_parser.o: http_parser.c
 log.o: log.c
 	${GCC} -c log.c
 
+siteblock.o: siteblock.c
+	${GCC} -c siteblock.c
+
 clean:
 	rm *.o
 
 wipe: clean
 	rm proxy_server
+	rm proxy.log
 
 #testcli:
 #	./clitests.sh
