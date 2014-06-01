@@ -51,6 +51,7 @@ EXIT STATUS
 #include "utils.h"
 #include "http_parser.h"
 #include "log.h"
+#include "siteblock.h"
 
 #define SUCCESS   0
 #define FAILURE   1
@@ -243,11 +244,12 @@ void *handle_client_request(void *c) {
        strncmp("POST", httptokens[0], sizeof(httptokens[0])) == 0 ||
        strncmp("HEAD", httptokens[0], sizeof(httptokens[0])) == 0) {
        DEBUGF("%s command.\n", httptokens[0]);
-       bcopy(httptokens[0], command, sizeof(httptokens[0]));
-       bcopy(httptokens[1], uri, sizeof(httptokens[1]));
-       bcopy(httptokens[2], http_version, sizeof(httptokens[2]));
+       bcopy(httptokens[0], command, strlen(httptokens[0]));
+       bcopy(httptokens[1], uri, strlen(httptokens[1]));
+       bcopy(httptokens[2], http_version, strlen(httptokens[2]));
        free_parse_allocs(httptokens, 100);
    } else {
+       //log_request(timestamp, httptokens[0], httptokens[2], inet_ntoa(client_info.sin_addr), httptokens[1], NULL, "Filtered", "HTTP command not supported");
        fprintf(stderr, "%s command not supported.\n", httptokens[0]);
        write(client_socket, "501 Not Implemented", 
              strlen("501 Not Implemented"));
@@ -267,10 +269,20 @@ void *handle_client_request(void *c) {
    parse_http_header_line(httptokens, httpstrs[1], 100);
    DEBUGF("HOST: %s\n", httptokens[1]);
 
+   // check the parental_controls log if the site is allowed.
+   if (allowed_site(httptokens[1]) == -1) {
+       //log_request(timestamp, command, http_version, inet_ntoa(client_info.sin_addr), uri, NULL, "Filtered", "Site Blocked");
+       fprintf(stderr, "Error: site not allowed by proxy.\n"); 
+       free_parse_allocs(httpstrs, numlines);
+       free_parse_allocs(httptokens, 100);
+       close_client(client_socket, &master);  
+       pthread_exit((void *)FAILURE);
+   }
+
    // do the dns lookup.
-   struct hostent *host;
-   host = gethostbyname(httptokens[1]);
+   struct hostent *host = gethostbyname(httptokens[1]);
    if (host == NULL) {      
+       //log_request(timestamp, command, http_version, inet_ntoa(client_info.sin_addr), uri, NULL, "Filtered", "DNS Failed");
        fprintf(stderr, "Error: gethostbyname(3) failed\n"); 
        free_parse_allocs(httpstrs, numlines);
        free_parse_allocs(httptokens, 100);
@@ -278,45 +290,55 @@ void *handle_client_request(void *c) {
        pthread_exit((void *)FAILURE);
    }
    free_parse_allocs(httptokens, 100);
-   sockaddr_in info;
-   memcpy(&info.sin_addr, host->h_addr_list[0], sizeof(info.sin_addr));
+
+   // get info into sockaddr_in struct.
+   sockaddr_in host_addr;
+   bzero((char*)&host_addr,sizeof(host_addr));
+   host_addr.sin_port = htons(80);
+   host_addr.sin_family = AF_INET;
+   bcopy((char*)host->h_addr,(char*)&host_addr.sin_addr.s_addr,host->h_length);
 
    // save server address for logging.
-   char *serv_addr_str = inet_ntoa(info.sin_addr);
-   DEBUGF("IP: %s\n", serv_addr_str);
-
+   char *serv_addr_str = inet_ntoa(host_addr.sin_addr);
+   DEBUGF("IP: %s, Port: %hu.\n", serv_addr_str, host_addr.sin_port);
+      
    // create socket to forward the request.
    DEBUGF("Thread creating socket to connect to server.\n");
-   int forward_socket = socket(AF_INET, SOCK_STREAM, 0);
+   int forward_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
    if (forward_socket < 0) {
+       //log_request(timestamp, command, http_version, inet_ntoa(client_info.sin_addr), uri, serv_addr_str, "Filtered", "Socket(2) Failed");
        fprintf(stderr, "Error: creating socket to forward the request"
                        "has failed. Aborting request.\n");
        free_parse_allocs(httpstrs, numlines);
        close_client(client_socket, &master);  
-       pthread_exit((void *)SUCCESS);
+       pthread_exit((void *)FAILURE);
    }
 
    // connect the to the server using the new socket.
-   DEBUGF("Thread attempting to connect to the server.\n");
-   int servcon = connect(forward_socket, (sockaddr *)&info, sizeof(info));
+   DEBUGF("Thread attempting to connect to the server, on socket %d.\n", forward_socket);
+   int servcon = connect(forward_socket, (sockaddr *)&host_addr, sizeof(sockaddr));
    if (servcon < 0) {
+       //log_request(timestamp, command, http_version, inet_ntoa(client_info.sin_addr), uri, serv_addr_str, "Filtered", "Connection to server failed");
        fprintf(stderr, "Error: Connection Failed. Aborting request.\n");
        close(forward_socket);
        close_client(client_socket, &master);  
-       pthread_exit((void *)SUCCESS);
-   }
+       pthread_exit((void *)FAILURE);
+   } 
 
    // write the request to the server. 
    // NOTE: failed to check if all bytes were written.
    DEBUGF("Forwarding client http request to the server.\n");
-   int wchk = write(forward_socket, buf, sizeof(buf));
+   int wchk = send(forward_socket, buf, sizeof(buf), MSG_NOSIGNAL);
+   free_parse_allocs(httpstrs, numlines);
    if (wchk < 0) {
+       //log_request(timestamp, command, http_version, inet_ntoa(client_info.sin_addr), uri, serv_addr_str, "Forwarding", "Client Forwarding Failed");
        fprintf(stderr, "Error: request forward to real server failed.\n");
        fprintf(stderr, "Error: Aborting request.\n");
        close(forward_socket);
        close_client(client_socket, &master);  
-       pthread_exit((void *)SUCCESS);
-   }
+       pthread_exit((void *)FAILURE);
+   } 
+
 
    // get the response from the server.
    char forwarder[500];
@@ -324,13 +346,22 @@ void *handle_client_request(void *c) {
    DEBUGF("Replying to client response by forwarding server response to client.\n");
    while (n > 0) {
       bzero(forwarder, sizeof(forwarder));
-      n = read(forward_socket, forwarder, sizeof(forwarder));
+      n = recv(forward_socket, forwarder, sizeof(forwarder), MSG_NOSIGNAL);
       if(!(n <= 0)) {
-         write(client_socket, forwarder, sizeof(forwarder));
+         int wc = send(client_socket, forwarder, sizeof(forwarder), MSG_NOSIGNAL);
+         if (wc < 0) {
+             //log_request(timestamp, command, http_version, inet_ntoa(client_info.sin_addr), uri, serv_addr_str, "Forwarding", "Server Forwarding Failed");
+             fprintf(stderr, "Error: request forward from real server failed.\n");
+             fprintf(stderr, "Error: Aborting request.\n");
+             close(forward_socket);
+             close_client(client_socket, &master);  
+             pthread_exit((void *)FAILURE);
+         }
       }
    }
 
    // client served succesful close socket and exit thread.
+   //log_request(timestamp, command, http_version, inet_ntoa(client_info.sin_addr), uri, serv_addr_str, "Forwarded", NULL);
    close(forward_socket);
    close_client(client_socket, &master);  
    pthread_exit((void *)SUCCESS);
@@ -341,5 +372,17 @@ void close_client(int clisock, fd_set *master) {
    close(clisock);
    FD_CLR(clisock, master);
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 

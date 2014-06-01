@@ -37,3 +37,36 @@ void get_current_time_formatted(char *formatted_time, int len) {
       fprintf(stderr, "Error: strftime failed.\n");
    }   
 }
+
+
+void log_request(const char* time, const char *req, const char *version, const char *host, const char *uri, const char *ip, const char *action, const char *errors) {
+    FILE *logfile = fopen("proxy.log", "a");
+    if (time != NULL) {
+        write(fileno(logfile), time, strlen(time));
+    }
+    if (req != NULL) {
+        write(fileno(logfile), req, strlen(req));
+    }
+    if (version != NULL) {
+        write(fileno(logfile), version, strlen(version));
+    }
+    if (host != NULL) {
+        write(fileno(logfile), host, strlen(host));
+    }
+    if (uri != NULL) {
+        write(fileno(logfile), uri, strlen(uri));
+    }
+    if (ip != NULL) {
+        write(fileno(logfile), ip, strlen(ip));
+    }
+    if (action != NULL) {
+        write(fileno(logfile), action, strlen(action));
+    }
+    if (errors != NULL) {
+        write(fileno(logfile), errors, strlen(errors));
+    }
+    fclose(logfile);
+}
+
+
+
