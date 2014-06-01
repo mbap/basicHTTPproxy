@@ -4,15 +4,18 @@
 
 /*******
 NAME
-     server -- returns a formatted time to a requesting client
+     proxy_server -- creates a communication path between a client
+                     and a server using TCP.
 
 SYNOPSIS
-     server [Port]
+     proxy_server [Port]
 
 DESCRIPTION  
-     This program accepts the client port number as it's arguments,
-     and while running, if contacted by a client, returns a chunk 
-     of a file to the user.
+     This program accepts the port number as it's arguments,
+     and while running, if contacted by a client, it contacts 
+     the server by forwarding the clients http request. It then
+     attempts to recieve the request data from the server and 
+     relay it back to the clients browser.
 
 OPERANDS
      The only operand is a valid unused port number. If no port 
