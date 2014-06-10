@@ -39,7 +39,7 @@ void forbidden_response(char *buf, size_t buflen) {
 void unimplmented_response(char *buf, size_t buflen) {
     char buffer[buflen];
     bzero(buffer, buflen);
-    strncpy(buffer, "HTTP/1.1 501 Not Implemented\r\n", 24);
+    strncpy(buffer, "HTTP/1.1 501 Not Implemented\r\n", 30);
     strncat(buffer, "Content-type: text/html\n\n", 25);
     strncat(buffer, "<html>\n", 7);
     strncat(buffer, " <body>\n", 8);
@@ -52,6 +52,21 @@ void unimplmented_response(char *buf, size_t buflen) {
     memcpy(buf, buffer, buflen);
 }
 
+void internal_error(char *buf, size_t buflen) {
+    char buffer[buflen];
+    bzero(buffer, buflen);
+    strncpy(buffer, "HTTP/1.1 500 Internal Server Error\r\n", 36);
+    strncat(buffer, "Content-type: text/html\n\n", 25);
+    strncat(buffer, "<html>\n", 7);
+    strncat(buffer, " <body>\n", 8);
+    strncat(buffer, "  <h1>500 Internal Server Error</h1>\n", 37);
+    strncat(buffer, "  <p>The proxy server had an error and the connection was aborted.</p>\n", 71);
+    strncat(buffer, " <body>\n", 8);
+    strncat(buffer, "<html>\n", 7);
+    strncat(buffer, "\r\n", 2);
+    strncat(buffer, "\r\n", 2);
+    memcpy(buf, buffer, buflen);
+}
 
 // returns a http response
 char *http_response(const uint status) { 
@@ -61,6 +76,9 @@ char *http_response(const uint status) {
         return buffer;
     } else if (501 == status) {
         unimplmented_response(buffer, 1024);
+        return buffer;
+    } else if (500 == status) {
+        internal_error(buffer, 1024);
         return buffer;
     }
     return NULL;
