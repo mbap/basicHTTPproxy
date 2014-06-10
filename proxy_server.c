@@ -53,6 +53,7 @@ EXIT STATUS
 
 #include "utils.h"
 #include "http_parser.h"
+#include "http_response.h"
 #include "log.h"
 #include "siteblock.h"
 
@@ -254,8 +255,9 @@ void *handle_client_request(void *c) {
    } else {
        //log_request(timestamp, httptokens[0], httptokens[2], inet_ntoa(client_info.sin_addr), httptokens[1], NULL, "Filtered", "HTTP command not supported");
        fprintf(stderr, "%s command not supported.\n", httptokens[0]);
-       write(client_socket, "501 Not Implemented", 
-             strlen("501 Not Implemented"));
+       char *response = http_response(501);
+       send(client_socket, response, strlen(response), MSG_NOSIGNAL);
+       free(response);
        free_parse_allocs(httptokens, 100);
        free_parse_allocs(httpstrs, numlines);
        close_client(client_socket, &master);  
@@ -276,6 +278,9 @@ void *handle_client_request(void *c) {
    if (allowed_site(httptokens[1]) == -1) {
        //log_request(timestamp, command, http_version, inet_ntoa(client_info.sin_addr), uri, NULL, "Filtered", "Site Blocked");
        fprintf(stderr, "Error: site not allowed by proxy.\n"); 
+       char *response = http_response(403);
+       send(client_socket, response, strlen(response), MSG_NOSIGNAL);
+       free(response);
        free_parse_allocs(httpstrs, numlines);
        free_parse_allocs(httptokens, 100);
        close_client(client_socket, &master);  
