@@ -325,46 +325,47 @@ void *handle_client_request(void *c) {
    char *serv_addr_str = inet_ntoa(host_addr.sin_addr);
    DEBUGF("IP: %s, Port: %hu.\n", serv_addr_str, host_addr.sin_port);
       
+   // create socket to forward the request.
+   DEBUGF("Thread creating socket to connect to server.\n");
+   int forward_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+   if (forward_socket < 0) {
+       //log_request(timestamp, command, http_version, inet_ntoa(client_info.sin_addr), uri, serv_addr_str, "Filtered", "Socket(2) Failed");
+       fprintf(stderr, "Error: creating socket to forward the request"
+                       "has failed. Aborting request.\n");
+       free_parse_allocs(httpstrs, numlines);
+       char *response = http_response(500);
+       send(client_socket, response, strlen(response), MSG_NOSIGNAL);
+       free(response);
+       close_client(client_socket, &master);  
+       pthread_exit((void *)FAILURE);
+   }
+
+   // connect the to the server using the new socket.
+   DEBUGF("Thread attempting to connect to the server, on socket %d.\n", forward_socket);
+   int servcon = connect(forward_socket, (sockaddr *)&host_addr, sizeof(sockaddr));
+   if (servcon < 0) {
+       //log_request(timestamp, command, http_version, inet_ntoa(client_info.sin_addr), uri, serv_addr_str, "Filtered", "Connection to server failed");
+       fprintf(stderr, "Error: Connection Failed. Aborting request.\n");
+       free_parse_allocs(httpstrs, numlines);
+       close(forward_socket);
+       char *response = http_response(500);
+       send(client_socket, response, strlen(response), MSG_NOSIGNAL);
+       free(response);
+       close_client(client_socket, &master);  
+       pthread_exit((void *)FAILURE);
+   } 
+
    // Setup SSL context.
    DEBUGF("Setting up SSL Context.\n");
    BIO *bio;
    SSL *ssl;
    SSL_CTX *ctx = SSL_CTX_new(SSLv23_client_method());
 
-   // Load the trust store
-   DEBUGF("Loading the OpenSSL trust store.\n");
-   if (!SSL_CTX_load_verify_locations(ctx, "TrustStore.pem", NULL)) {
-       fprintf(stderr, "Error loading trust store."
-                       "Returning with internal error.\n");
-       ERR_print_errors_fp(stderr);
-       SSL_CTX_free(ctx);
-       free_parse_allocs(httpstrs, numlines);
-       char *response = http_response(500);
-       send(client_socket, response, strlen(response), MSG_NOSIGNAL);
-       free(response);
-       close_client(client_socket, &master);  
-       pthread_exit((void *)FAILURE); 
-   }
-
    // setup the new connection
    DEBUGF("Setting up a new connection using the current OpenSSL Context.\n");
-   bio = BIO_new_ssl_connect(ctx);
-   BIO_get_ssl(bio, &ssl);
-   SSL_set_mode(ssl, SSL_MODE_AUTO_RETRY);
-
-   // verify the the trust store cert
-   DEBUGF("Verifying the trust store certificate.\n");
-   if (SSL_get_verify_result(ssl) != X509_V_OK) {
-       fprintf(stderr, "Certificate verification failed. Aborting.\n");
-       BIO_free_all(bio);
-       SSL_CTX_free(ctx);
-       free_parse_allocs(httpstrs, numlines);
-       char *response = http_response(500);
-       send(client_socket, response, strlen(response), MSG_NOSIGNAL);
-       free(response);
-       close_client(client_socket, &master);  
-       pthread_exit((void *)FAILURE); 
-   }
+   ssl = SSL_new(ctx);
+   bio = BIO_new_socket(forward_socket, BIO_NOCLOSE);
+   SSL_set_bio(ssl, bio, bio);
 
    // forward the request to the server. 
    DEBUGF("Forwarding client http request to the server.\n");
@@ -388,6 +389,8 @@ void *handle_client_request(void *c) {
            char *response = http_response(500);
            send(client_socket, response, strlen(response), MSG_NOSIGNAL);
            free(response);
+           SSL_shutdown(ssl);
+           close(forward_socket);
            close_client(client_socket, &master);
            pthread_exit((void *)FAILURE);
        }
@@ -397,6 +400,8 @@ void *handle_client_request(void *c) {
    BIO_free_all(bio);
    SSL_CTX_free(ctx);
    //log_request(timestamp, command, http_version, inet_ntoa(client_info.sin_addr), uri, serv_addr_str, "Forwarded", NULL);
+   SSL_shutdown(ssl);
+   close(forward_socket);
    close_client(client_socket, &master);  
    pthread_exit((void *)SUCCESS);
 }
