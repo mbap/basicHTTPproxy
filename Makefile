@@ -2,7 +2,7 @@
 # Michael Baptist - mbaptist@ucsc.edu
 # Written: May 8, 2014	
 
-GCC       = gcc -g -O0 -Wall -Wextra -std=gnu99 -pthread
+GCC       = gcc -g -O0 -Wall -Wextra -std=gnu99 -pthread -lcrypto -lssl
 CSOURCE   = http_parser.c http_response.c utils.c proxy_server.c 
 CHEADER   = http_parser.h http_response.h utils.h
 

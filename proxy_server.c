@@ -47,6 +47,9 @@ EXIT STATUS
 #include <time.h>        // for the random numbers
 #include <sys/ioctl.h>   // allows nonblocking sockets.
 #include <pthread.h>     // allows for threaded server.
+#include <openssl/bio.h> // ssl lib 1
+#include <openssl/ssl.h> // ssl lib 2
+#include <openssl/err.h> // ssl lib 3
 
 // comment this out to turn on debug print statements.
 //#define NDEBUG NDEBUG
@@ -74,6 +77,11 @@ void *handle_client_request(void *clisock);
 // closes a client socket and removes it from an fd_set
 void close_client(int clisock, fd_set *master);
 
+// setups up thread-safe OpenSSL
+int thread_setup(void);
+
+// cleans up thread-safe OpenSSL
+int thread_cleanup(void);
 
 int main(int argc, char **argv) {
   //initial error checking
@@ -138,6 +146,13 @@ int main(int argc, char **argv) {
       return errno;
   } 
 
+  // Setup openSSL library calls.
+  SSL_library_init();
+  SSL_load_error_strings();
+  ERR_load_BIO_strings();
+  OpenSSL_add_all_algorithms();
+  thread_setup();
+
   // loop forever to accept new connections.
   while (1) {
       DEBUGF("Main thread waiting for connections on listening port.\n");
@@ -180,7 +195,7 @@ int main(int argc, char **argv) {
   // program never gets here, but if there was an exit 
   // server this would close the server. 
   close(listen_socket);
-
+  thread_cleanup();
   return exit_status;
 }
 
@@ -318,6 +333,9 @@ void *handle_client_request(void *c) {
        fprintf(stderr, "Error: creating socket to forward the request"
                        "has failed. Aborting request.\n");
        free_parse_allocs(httpstrs, numlines);
+       char *response = http_response(500);
+       send(client_socket, response, strlen(response), MSG_NOSIGNAL);
+       free(response);
        close_client(client_socket, &master);  
        pthread_exit((void *)FAILURE);
    }
@@ -328,48 +346,61 @@ void *handle_client_request(void *c) {
    if (servcon < 0) {
        //log_request(timestamp, command, http_version, inet_ntoa(client_info.sin_addr), uri, serv_addr_str, "Filtered", "Connection to server failed");
        fprintf(stderr, "Error: Connection Failed. Aborting request.\n");
+       free_parse_allocs(httpstrs, numlines);
        close(forward_socket);
+       char *response = http_response(500);
+       send(client_socket, response, strlen(response), MSG_NOSIGNAL);
+       free(response);
        close_client(client_socket, &master);  
        pthread_exit((void *)FAILURE);
    } 
 
-   // write the request to the server. 
-   // NOTE: failed to check if all bytes were written.
+   // Setup SSL context.
+   DEBUGF("Setting up SSL Context.\n");
+   BIO *bio;
+   SSL *ssl;
+   SSL_CTX *ctx = SSL_CTX_new(SSLv23_client_method());
+
+   // setup the new connection
+   DEBUGF("Setting up a new connection using the current OpenSSL Context.\n");
+   ssl = SSL_new(ctx);
+   bio = BIO_new_socket(forward_socket, BIO_NOCLOSE);
+   SSL_set_bio(ssl, bio, bio);
+
+   // forward the request to the server. 
    DEBUGF("Forwarding client http request to the server.\n");
-   int wchk = send(forward_socket, buf, sizeof(buf), MSG_NOSIGNAL);
+   BIO_write(bio, buf, sizeof(buf));
    free_parse_allocs(httpstrs, numlines);
-   if (wchk < 0) {
-       //log_request(timestamp, command, http_version, inet_ntoa(client_info.sin_addr), uri, serv_addr_str, "Forwarding", "Client Forwarding Failed");
-       fprintf(stderr, "Error: request forward to real server failed.\n");
-       fprintf(stderr, "Error: Aborting request.\n");
-       close(forward_socket);
-       close_client(client_socket, &master);  
-       pthread_exit((void *)FAILURE);
-   } 
-
 
    // get the response from the server.
-   char forwarder[500];
-   int n = 1;
    DEBUGF("Replying to client response by forwarding server response to client.\n");
-   while (n > 0) {
-      bzero(forwarder, sizeof(forwarder));
-      n = recv(forward_socket, forwarder, sizeof(forwarder), MSG_NOSIGNAL);
-      if(!(n <= 0)) {
-         int wc = send(client_socket, forwarder, sizeof(forwarder), MSG_NOSIGNAL);
-         if (wc < 0) {
-             //log_request(timestamp, command, http_version, inet_ntoa(client_info.sin_addr), uri, serv_addr_str, "Forwarding", "Server Forwarding Failed");
-             fprintf(stderr, "Error: request forward from real server failed.\n");
-             fprintf(stderr, "Error: Aborting request.\n");
-             close(forward_socket);
-             close_client(client_socket, &master);  
-             pthread_exit((void *)FAILURE);
-         }
-      }
+   int ssl_wchk = 0;
+   char forwarder[500];
+   for (;;) {
+       ssl_wchk = BIO_read(bio, forwarder, 499);
+       if (ssl_wchk <= 0) break;
+       int wc = send(client_socket, forwarder, sizeof(forwarder), MSG_NOSIGNAL);
+       if (wc < 0) {
+          //log_request(timestamp, command, http_version, inet_ntoa(clien    t_info.sin_addr), uri, serv_addr_str, "Forwarding", "Server Forwarding Faile    d");
+           fprintf(stderr, "Error: request forward from real server failed    .\n");
+           fprintf(stderr, "Error: Aborting request.\n");
+           BIO_free_all(bio);
+           SSL_CTX_free(ctx);
+           char *response = http_response(500);
+           send(client_socket, response, strlen(response), MSG_NOSIGNAL);
+           free(response);
+           SSL_shutdown(ssl);
+           close(forward_socket);
+           close_client(client_socket, &master);
+           pthread_exit((void *)FAILURE);
+       }
    }
 
-   // client served succesful close socket and exit thread.
+   // close the connection and free the ssl context. 
+   BIO_free_all(bio);
+   SSL_CTX_free(ctx);
    //log_request(timestamp, command, http_version, inet_ntoa(client_info.sin_addr), uri, serv_addr_str, "Forwarded", NULL);
+   SSL_shutdown(ssl);
    close(forward_socket);
    close_client(client_socket, &master);  
    pthread_exit((void *)SUCCESS);
@@ -384,6 +415,95 @@ void close_client(int clisock, fd_set *master) {
 
 
 
+
+
+
+
+
+/***********************************************************************
+ *Copyright (C) 1998 - 2011, Daniel Stenberg, <daniel@haxx.se>, et al.
+ *
+ * This software is licensed as described in the file COPYING, which
+ * you should have received as part of this distribution. The terms
+ * are also available at http://curl.haxx.se/docs/copyright.html.
+ *
+ * You may opt to use, copy, modify, merge, publish, distribute and/or sell
+ * copies of the Software, and permit persons to whom the Software is
+ * furnished to do so, under the terms of the COPYING file.
+ *
+ * This software is distributed on an "AS IS" basis, WITHOUT WARRANTY OF ANY
+ * KIND, either express or implied.
+ *
+ *************************************************************************/ 
+/* Example source code to show one way to set the necessary OpenSSL locking
+ * callbacks if you want to do multi-threaded transfers with HTTPS/FTPS with
+ * libcurl built to use OpenSSL.
+ *
+ * This is not a complete stand-alone example.
+ *
+ * Author: Jeremy Brown
+ */ 
+ 
+ 
+#define MUTEX_TYPE       pthread_mutex_t
+#define MUTEX_SETUP(x)   pthread_mutex_init(&(x), NULL)
+#define MUTEX_CLEANUP(x) pthread_mutex_destroy(&(x))
+#define MUTEX_LOCK(x)    pthread_mutex_lock(&(x))
+#define MUTEX_UNLOCK(x)  pthread_mutex_unlock(&(x))
+#define THREAD_ID        pthread_self(  )
+ 
+ 
+void handle_error(const char *file, int lineno, const char *msg){
+     fprintf(stderr, "** %s:%d %s\n", file, lineno, msg);
+     ERR_print_errors_fp(stderr);
+     /* exit(-1); */ 
+ }
+ 
+/* This array will store all of the mutexes available to OpenSSL. */ 
+static MUTEX_TYPE *mutex_buf= NULL;
+ 
+ 
+static void locking_function(int mode, int n, const char * file, int line)
+{
+  if (mode & CRYPTO_LOCK)
+    MUTEX_LOCK(mutex_buf[n]);
+  else
+    MUTEX_UNLOCK(mutex_buf[n]);
+}
+ 
+static unsigned long id_function(void)
+{
+  return ((unsigned long)THREAD_ID);
+}
+ 
+int thread_setup(void)
+{
+  int i;
+ 
+  mutex_buf = malloc(CRYPTO_num_locks(  ) * sizeof(MUTEX_TYPE));
+  if (!mutex_buf)
+    return 0;
+  for (i = 0;  i < CRYPTO_num_locks(  );  i++)
+    MUTEX_SETUP(mutex_buf[i]);
+  CRYPTO_set_id_callback(id_function);
+  CRYPTO_set_locking_callback(locking_function);
+  return 1;
+}
+ 
+int thread_cleanup(void)
+{
+  int i;
+ 
+  if (!mutex_buf)
+    return 0;
+  CRYPTO_set_id_callback(NULL);
+  CRYPTO_set_locking_callback(NULL);
+  for (i = 0;  i < CRYPTO_num_locks(  );  i++)
+    MUTEX_CLEANUP(mutex_buf[i]);
+  free(mutex_buf);
+  mutex_buf = NULL;
+  return 1;
+}
 
 
 
